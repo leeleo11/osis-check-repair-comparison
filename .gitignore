@@ -1,0 +1,49 @@
+# Python and tooling
+.venv/
+.venvs/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+configs/*.local.*
+configs/parent_repo.local.txt
+*.key
+*.pem
+
+# Experiment inputs and outputs (always external/private)
+runs/
+reports/
+tmp/
+data/
+datasets/
+seeded/
+private/
+candidate_project/
+model_responses/
+*.log
+*.db
+*.sqlite
+*.sqlite3
+
+# Native OSIS outputs
+OSISPost.out
+*.lcc
+Check/
+Temperary/
+Result/
+Error/
+Model/
+MutiCase/
+Break/
+image/
+secmesh/
+
+# Local export targets
+repro-export/

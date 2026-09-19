@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/osis/check-repair-task.schema.json",
+  "title": "CheckRepairTaskSpec",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "task_id",
+    "bridge_type",
+    "difficulty",
+    "natural_language_prompt",
+    "protocol_version"
+  ],
+  "properties": {
+    "task_id": {"type": "string", "minLength": 1},
+    "bridge_type": {"type": "string", "minLength": 1},
+    "difficulty": {"type": "string", "minLength": 1},
+    "natural_language_prompt": {"type": "string", "minLength": 1},
+    "protocol_version": {"type": "string", "const": "check-repair-v2"},
+    "total_timeout_s": {"type": "integer", "minimum": 1},
+    "metadata": {"type": "object", "additionalProperties": true}
+  }
+}

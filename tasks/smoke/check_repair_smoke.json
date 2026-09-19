@@ -1,0 +1,7 @@
+{
+  "task_id": "smoke-synthetic-001",
+  "bridge_type": "synthetic",
+  "difficulty": "smoke",
+  "natural_language_prompt": "Inspect the synthetic candidate and describe a safe repair plan. No native OSIS files are required.",
+  "protocol_version": "check-repair-v2"
+}
