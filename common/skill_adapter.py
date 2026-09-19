@@ -106,3 +106,10 @@ class SkillAdapter:
             digest.update(path.read_bytes())
             digest.update(b"\0")
         return digest.hexdigest()
+
+    def fixed_bundle_text(self) -> str:
+        """Return every SKILL.md body in deterministic order for T1."""
+        sections = [f"# Skill snapshot sha256={self.skill_bundle_hash()}"]
+        for skill in self.list_skills():
+            sections.extend((f"\n## {skill.skill_id}", self.read_skill(skill.skill_id)))
+        return "\n".join(sections)

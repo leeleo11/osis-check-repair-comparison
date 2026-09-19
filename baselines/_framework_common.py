@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import importlib.metadata
 import json
+import os
 import time
 from pathlib import Path
 from typing import Any
@@ -23,6 +25,29 @@ def candidate_workspace(request: dict[str, Any]) -> CandidateWorkspace:
     return CandidateWorkspace(Path(request["workspace"]) / "candidate_project")
 
 
+def package_version(name: str) -> str:
+    try:
+        return importlib.metadata.version(name)
+    except importlib.metadata.PackageNotFoundError:
+        return "unavailable"
+
+
+def resolve_max_steps(value: object, *, default: int = 200) -> int:
+    try:
+        steps = int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return default
+    return steps if steps > 0 else 100_000
+
+
+def resolve_max_tokens(value: object) -> int | None:
+    try:
+        tokens = int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    return tokens if tokens > 0 else None
+
+
 def build_prompt(request: dict[str, Any]) -> str:
     task = request["task"]
     return (
@@ -36,6 +61,105 @@ def build_prompt(request: dict[str, Any]) -> str:
 
 def skill_reader(request: dict[str, Any]) -> SkillAdapter:
     return SkillAdapter(Path(request["skills_dir"]))
+
+
+def tool_error(exc: BaseException) -> str:
+    return f"TOOL_ERROR: {type(exc).__name__}: {exc}"
+
+
+class BoundedTools:
+    """Same bounded capability set exposed through each framework API."""
+
+    def __init__(self, request: dict[str, Any], *, allow_write: bool = True) -> None:
+        self.skills = skill_reader(request)
+        self.candidate = candidate_workspace(request)
+        self.allow_write = allow_write
+
+    def list_skills(self) -> str:
+        """List mounted public skills as compact JSON."""
+        return json.dumps(self.skills.skill_index(), ensure_ascii=False)
+
+    def read_skill(self, skill_id: str) -> str:
+        """Read one mounted SKILL.md.
+
+        Args:
+            skill_id: Exact mounted skill directory name.
+        """
+        try:
+            return self.skills.read_skill(skill_id)
+        except Exception as exc:  # noqa: BLE001
+            return tool_error(exc)
+
+    def read_skill_reference(self, skill_id: str, relative_path: str) -> str:
+        """Read a bounded reference file from one mounted skill.
+
+        Args:
+            skill_id: Exact mounted skill directory name.
+            relative_path: Relative path inside that skill directory.
+        """
+        try:
+            return self.skills.read_reference(skill_id, relative_path)
+        except Exception as exc:  # noqa: BLE001
+            return tool_error(exc)
+
+    def list_candidate_files(self) -> str:
+        """List files in the staged candidate project as JSON."""
+        return json.dumps(self.candidate.list_files(), ensure_ascii=False)
+
+    def read_candidate_file(self, relative_path: str) -> str:
+        """Read one UTF-8 candidate file.
+
+        Args:
+            relative_path: Path relative to the candidate project.
+        """
+        try:
+            return self.candidate.read_text(relative_path)
+        except Exception as exc:  # noqa: BLE001
+            return tool_error(exc)
+
+    def write_candidate_file(self, relative_path: str, content: str) -> str:
+        """Write one text file inside the candidate project.
+
+        Args:
+            relative_path: Path relative to the candidate project.
+            content: Complete replacement file content.
+        """
+        if not self.allow_write:
+            return "TOOL_ERROR: this role is read-only"
+        try:
+            self.candidate.write_text(relative_path, content)
+            return f"wrote {relative_path} ({len(content)} chars)"
+        except Exception as exc:  # noqa: BLE001
+            return tool_error(exc)
+
+    def compile_candidate(self) -> str:
+        """Parse every candidate Python file and return syntax failures."""
+        return json.dumps(self.candidate.compile_python(), ensure_ascii=False)
+
+    def functions(self, *, include_write: bool | None = None) -> list[Any]:
+        writable = self.allow_write if include_write is None else include_write
+        functions: list[Any] = [
+            self.list_skills,
+            self.read_skill,
+            self.read_skill_reference,
+            self.list_candidate_files,
+            self.read_candidate_file,
+        ]
+        if writable:
+            functions.append(self.write_candidate_file)
+        functions.append(self.compile_candidate)
+        return functions
+
+
+def model_api_settings(request: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "model": request["model"],
+        "base_url": request.get("base_url") or os.environ.get("OSIS_MODEL_BASE_URL", ""),
+        "api_key": request.get("api_key") or os.environ.get("OSIS_MODEL_API_KEY", ""),
+        "temperature": float(request.get("temperature", 0.0)),
+        "timeout": float(request.get("request_timeout_s", 180.0)),
+        "max_tokens": resolve_max_tokens(request.get("max_output_tokens", request.get("max_tokens"))),
+    }
 
 
 def finish(
