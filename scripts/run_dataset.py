@@ -5,7 +5,12 @@ from __future__ import annotations
 import argparse
 import json
 import subprocess
+import sys
 from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from check_repair.data import load_external_samples
 from check_repair.runner import CheckRepairRunner, OSISNativeEvaluator
