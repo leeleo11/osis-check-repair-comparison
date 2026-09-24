@@ -1,4 +1,4 @@
-"""T4: OpenHands Conversation with native progressive AgentSkills."""
+"""T4: OpenHands native skills plus the SDK's default terminal and file editor."""
 
 from __future__ import annotations
 
@@ -11,15 +11,14 @@ from typing import Any, Callable
 os.environ.setdefault("OPENHANDS_SUPPRESS_BANNER", "1")
 
 from baselines._framework_common import (
-    BoundedTools,
     finish,
     model_api_settings,
+    LIBRARY_LOOP_BOUND,
     package_version,
-    resolve_max_steps,
 )
 
 
-Runtime = Callable[[dict[str, Any], str, BoundedTools, list[Any]], dict[str, Any]]
+Runtime = Callable[[dict[str, Any], str, list[Any]], dict[str, Any]]
 
 
 def load_native_skills(skills_dir: Path, loader: Callable[[Path], Any] | None = None) -> list[Any]:
@@ -35,52 +34,22 @@ def load_native_skills(skills_dir: Path, loader: Callable[[Path], Any] | None = 
     return result
 
 
+def native_tool_specs() -> list[Any]:
+    """OpenHands default exec tools. Browser stays off, matching the modeling line."""
+
+    from openhands.tools.preset.default import get_default_tools
+
+    return get_default_tools(enable_browser=False)
+
+
 def build_t4_prompt(request: dict[str, Any]) -> str:
     return (
-        "Repair the failed check in the staged candidate. First use InvokeSkillTool to load the "
-        "relevant native AgentSkill, then inspect candidate files, make the smallest safe edit, "
-        "compile the candidate, and finish with the required localizations JSON. The official "
-        "verifier runs after this conversation.\n\n"
+        "Repair the failed check in the staged candidate. Use the native invoke_skill tool "
+        "(OpenHands InvokeSkillTool) first to load the relevant AgentSkill. Then use the "
+        "framework terminal and file editor in the candidate workspace. Do not reconstruct "
+        "skill bodies from an injected inventory. Finish with FinishTool and the localization JSON.\n\n"
         + json.dumps(request["task"], ensure_ascii=False, indent=2)
     )
-
-
-def _expose(name: str, description: str, properties: dict[str, Any], required: list[str], function: Callable[..., str]) -> Any:
-    from openhands.sdk import Tool
-    from openhands.sdk.tool import Action, Observation, ToolDefinition, ToolExecutor, register_tool
-
-    action_type = Action.from_mcp_schema(
-        f"{name}_action",
-        {"type": "object", "properties": properties, "required": required},
-    )
-
-    class HarnessObservation(Observation):
-        """Bounded harness tool output."""
-
-    class Executor(ToolExecutor):
-        def __call__(self, action, conversation=None):  # noqa: ANN001
-            arguments = {key: value for key, value in action.model_dump().items() if key in properties}
-            try:
-                return HarnessObservation.from_text(text=str(function(**arguments)))
-            except Exception as exc:  # noqa: BLE001
-                return HarnessObservation.from_text(text=f"TOOL_ERROR: {type(exc).__name__}: {exc}", is_error=True)
-
-    class Definition(ToolDefinition[action_type, HarnessObservation]):
-        @classmethod
-        def create(cls, conv_state=None, **kwargs):  # noqa: ANN001
-            return [
-                cls(
-                    description=description,
-                    action_type=action_type,
-                    observation_type=HarnessObservation,
-                    executor=Executor(),
-                )
-            ]
-
-    Definition.name = name
-    definition = Definition.create()[0]
-    register_tool(name, definition)
-    return Tool(name=name)
 
 
 def _event_summary(events: list[Any]) -> tuple[list[dict[str, Any]], int, int]:
@@ -88,32 +57,28 @@ def _event_summary(events: list[Any]) -> tuple[list[dict[str, Any]], int, int]:
     response_ids: set[str] = set()
     tool_calls = 0
     for event in events:
+        tool_name = str(getattr(event, "tool_name", None) or "")
         response_id = getattr(event, "llm_response_id", None)
         if response_id:
             response_ids.add(str(response_id))
-        tool_name = getattr(event, "tool_name", None)
-        if type(event).__name__ == "ActionEvent" or tool_name:
+        if tool_name:
             tool_calls += 1
         trace.append(
             {
-                "kind": type(event).__name__,
-                "tool_name": str(tool_name or ""),
+                "event_type": type(event).__name__,
+                "tool_name": tool_name,
                 "llm_response_id": str(response_id or ""),
             }
         )
     return trace, len(response_ids) or int(bool(events)), tool_calls
 
 
-def _openhands_runtime(
-    request: dict[str, Any],
-    prompt: str,
-    tools: BoundedTools,
-    native_skills: list[Any],
-) -> dict[str, Any]:
+def _openhands_runtime(request: dict[str, Any], prompt: str, native_skills: list[Any]) -> dict[str, Any]:
     from openhands.sdk import Agent, AgentContext, Conversation, LLM
     from openhands.sdk.conversation import get_agent_final_response
 
     settings = model_api_settings(request)
+    tools = native_tool_specs()
     llm_kwargs: dict[str, Any] = {
         "model": f"openai/{settings['model']}",
         "base_url": settings["base_url"],
@@ -126,35 +91,11 @@ def _openhands_runtime(
     }
     if settings["max_tokens"] is not None:
         llm_kwargs["max_output_tokens"] = settings["max_tokens"]
-    llm = LLM(**llm_kwargs)
-    exposed = [
-        _expose("list_candidate_files", "List staged candidate files.", {}, [], tools.list_candidate_files),
-        _expose(
-            "read_candidate_file",
-            "Read a staged candidate file.",
-            {"relative_path": {"type": "string"}},
-            ["relative_path"],
-            tools.read_candidate_file,
-        ),
-        _expose(
-            "write_candidate_file",
-            "Replace one candidate text file.",
-            {"relative_path": {"type": "string"}, "content": {"type": "string"}},
-            ["relative_path", "content"],
-            tools.write_candidate_file,
-        ),
-        _expose("compile_candidate", "Parse candidate Python files.", {}, [], tools.compile_candidate),
-        _expose(
-            "read_skill_reference",
-            "Read a reference named by an invoked native skill.",
-            {"skill_id": {"type": "string"}, "relative_path": {"type": "string"}},
-            ["skill_id", "relative_path"],
-            tools.read_skill_reference,
-        ),
-    ]
+    workspace = Path(request["workspace"]) / "candidate_project"
+    workspace.mkdir(parents=True, exist_ok=True)
     agent = Agent(
-        llm=llm,
-        tools=exposed,
+        llm=LLM(**llm_kwargs),
+        tools=tools,
         agent_context=AgentContext(
             skills=native_skills,
             load_user_skills=False,
@@ -165,15 +106,15 @@ def _openhands_runtime(
     )
     conversation = Conversation(
         agent=agent,
-        workspace=str(tools.candidate.root),
-        max_iteration_per_run=resolve_max_steps(request.get("max_steps")),
+        workspace=str(workspace),
+        max_iteration_per_run=LIBRARY_LOOP_BOUND,
         visualizer=None,
         delete_on_close=False,
         stuck_detection_thresholds={
-            "action_observation": 16,
-            "action_error": 8,
-            "monologue": 8,
-            "alternating_pattern": 24,
+            "action_observation": 24,
+            "action_error": 12,
+            "monologue": 12,
+            "alternating_pattern": 40,
         },
     )
     try:
@@ -185,6 +126,7 @@ def _openhands_runtime(
         return {
             "final_answer": (get_agent_final_response(events) or "")[-4000:],
             "execution_status": status,
+            "framework_tools": [tool.name for tool in tools],
             "model_calls": model_calls,
             "tool_calls": tool_calls,
             "framework_steps": len(events),
@@ -217,12 +159,7 @@ def run_generation(
     try:
         native_skills = load_native_skills(Path(request["skills_dir"]), loader=skill_loader)
         metadata["native_skill_count"] = len(native_skills)
-        output = (runtime or _openhands_runtime)(
-            request,
-            build_t4_prompt(request),
-            BoundedTools(request),
-            native_skills,
-        )
+        output = (runtime or _openhands_runtime)(request, build_t4_prompt(request), native_skills)
         metadata.update(output)
         execution = str(output.get("execution_status", "")).upper()
         failed = "ERROR" in execution or "STUCK" in execution

@@ -41,6 +41,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--label", default="formal")
     parser.add_argument("--base-url", default="")
+    parser.add_argument("--osis-agents-file")
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()
@@ -63,6 +64,8 @@ def main() -> int:
         skills_dir=Path(args.skills_dir),
         native_evaluator=OSISNativeEvaluator(Path(args.osis_project), Path(args.osis_model_python)),
         parent_commit=_commit(parent),
+        parent_repo=parent,
+        osis_agents_file=args.osis_agents_file,
         base_url=args.base_url,
     )
     results = [

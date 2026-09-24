@@ -6,7 +6,7 @@
 - T3 环境：smolagents 1.26 系列。
 - T4 环境：OpenHands SDK 1.44 系列。
 - T5 环境：CrewAI 1.15 系列。
-- T6 与原生验算：父仓库验证过的 OSIS-AI Python、pyosis、OpenCode 和本机 OSIS 引擎。
+- T6 与原生验算：父仓库已经在运行的 OpenCode（默认 `http://127.0.0.1:4096`）、父仓库 Python、pyosis 和本机 OSIS 引擎。本仓库不另起 OpenCode，也不改它的权限。
 
 执行以下命令查看将创建的环境，不做修改：
 
@@ -19,8 +19,7 @@
 - OSIS_PARENT_REPO：父仓库路径，可由命令参数或 local 配置替代。
 - OSIS_MODEL_API_KEY：模型网关密钥。
 - OSIS_MODEL_BASE_URL：OpenAI compatible 网关地址。
-- OPENCODE_EXE：T6 使用的 OpenCode 可执行文件，可选。
-- T6_AI_PORT：T6 隔离服务端口，默认 4097。
+- 父仓库 OpenCode 须已按父仓库验算修复评测的方式启动。T6 使用父仓库默认地址 `http://127.0.0.1:4096`，不读取 `OPENCODE_EXE` 或 `T6_AI_PORT`。
 
 密钥不写入 adapter_request、manifest、报告或 Git 文件。
 

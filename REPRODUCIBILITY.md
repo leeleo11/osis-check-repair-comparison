@@ -20,11 +20,11 @@
 
     uv run python scripts/setup_framework_envs.py
 
-T6 使用父仓库已经验证的 OSIS-AI/OpenCode 环境。各框架版本由 pyproject.toml 与 uv.lock 固定。
+T1–T5 的框架能力与建模线对齐。T6 不在本仓库启动 OpenCode：先按父仓库方式启动其 OpenCode，再由本仓库调用 `datasets/check_repair/run_eval.py` 的 `chat_via_agent`。各框架版本由 pyproject.toml 与 uv.lock 固定。
 
 ## 3. 创建统一技能快照
 
-正式比较不直接挂载父仓库原始模板树。先创建本地、被忽略的快照；构建器排除 templates、tests、answers 和 ground_truth 等高风险目录：
+T6 使用父仓库 OpenCode 里已经挂着的 `.agents/skills`。T1–T5 使用这份树的完整副本，不删模板或参考文件。题目金标准不在技能树里：
 
     uv run python scripts/create_skill_snapshot.py --parent-repo PATH_TO_PARENT
 
@@ -78,7 +78,7 @@ Runner 只选择 status=seeded 的记录。公开任务对象与模型输入中�
       --jobs 2 \
       --resume
 
-T1–T5 可以按 jobs 并发调度；T6 始终进入独立串行尾队列，避免共享 OSIS 与 OpenCode 状态冲突。
+T1–T5 可以按 jobs 并发调度。T6 始终进入独立串行尾队列，因为它复用父仓库正在运行的 OpenCode 和 OSIS。T6 评测跳过语法编译硬门禁，正式验算仍由本仓库 runner 把候选拷到 scratch 后执行 `prep/main.py`、`solve` 和 CheckSolve。
 
 ## 8. 每条 run 的可审计信息
 

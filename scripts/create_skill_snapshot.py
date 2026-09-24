@@ -1,4 +1,8 @@
-"""Build an ignored, no-template skill snapshot shared by T1-T6."""
+"""Copy the parent skill tree that T6's OpenCode already uses.
+
+T1-T5 read this copy. Nothing inside ``.agents/skills`` is removed, so the
+files match the parent agent. Dataset gold stays outside this tree.
+"""
 
 from __future__ import annotations
 
@@ -14,30 +18,13 @@ if str(PROJECT_ROOT) not in sys.path:
 from common.paths import resolve_parent_repo
 
 
-EXCLUDED_PARTS = frozenset({"templates", "test", "tests", "answer", "answers", "expected", "ground_truth"})
-
-
 def create_snapshot(source: Path, destination: Path) -> int:
     source = source.resolve()
     destination = destination.resolve()
     if destination.exists():
         shutil.rmtree(destination)
-    destination.mkdir(parents=True)
-    copied = 0
-    for path in sorted(source.rglob("*")):
-        relative = path.relative_to(source)
-        if any(part.casefold() in EXCLUDED_PARTS for part in relative.parts):
-            continue
-        if path.is_symlink():
-            continue
-        target = destination / relative
-        if path.is_dir():
-            target.mkdir(exist_ok=True)
-        elif path.is_file():
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(path, target)
-            copied += 1
-    return copied
+    shutil.copytree(source, destination, symlinks=False)
+    return sum(1 for path in destination.rglob("*") if path.is_file())
 
 
 def main() -> int:

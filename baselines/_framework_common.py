@@ -32,6 +32,11 @@ def package_version(name: str) -> str:
         return "unavailable"
 
 
+# Libraries install a small default loop bound when the argument is omitted.
+# The experiment does not stop on steps. This value only disables that default.
+LIBRARY_LOOP_BOUND = 1_000_000
+
+
 def resolve_max_steps(value: object, *, default: int = 200) -> int:
     try:
         steps = int(value)  # type: ignore[arg-type]
@@ -132,22 +137,67 @@ class BoundedTools:
         except Exception as exc:  # noqa: BLE001
             return tool_error(exc)
 
-    def compile_candidate(self) -> str:
-        """Parse every candidate Python file and return syntax failures."""
-        return json.dumps(self.candidate.compile_python(), ensure_ascii=False)
+    def list_reference_files(self, skill_id: str, template_name: str = "") -> str:
+        """List files under one skill, or under one template directory inside it."""
+        try:
+            skill_dir = self.skills._skill_dir(skill_id)
+            target = skill_dir
+            if template_name.strip():
+                raw = Path(template_name)
+                if raw.is_absolute() or ".." in raw.parts:
+                    raise ValueError("template path must stay inside the skill")
+                target = skill_dir / raw
+            if not target.is_dir():
+                raise FileNotFoundError(template_name or skill_id)
+            files = sorted(
+                path.relative_to(skill_dir).as_posix()
+                for path in target.rglob("*")
+                if path.is_file()
+            )
+            return json.dumps(files, ensure_ascii=False)
+        except Exception as exc:  # noqa: BLE001
+            return tool_error(exc)
+
+    def search_skill_cases(self, query: str) -> str:
+        """Search mounted skill markdown for a case or API keyword."""
+        terms = [term.casefold() for term in query.split() if term.strip()]
+        if not terms:
+            return "[]"
+        hits: list[dict[str, str]] = []
+        root = self.skills.root
+        for path in sorted(root.rglob("*.md")):
+            try:
+                text = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            lowered = text.casefold()
+            if not any(term in lowered for term in terms):
+                continue
+            hits.append(
+                {
+                    "skill_id": path.relative_to(root).parts[0],
+                    "path": path.relative_to(root).as_posix(),
+                    "preview": text[:240],
+                }
+            )
+            if len(hits) >= 20:
+                break
+        return json.dumps(hits, ensure_ascii=False)
 
     def functions(self, *, include_write: bool | None = None) -> list[Any]:
+        """LangGraph has no domain tools. This is the same surface as the modeling line."""
         writable = self.allow_write if include_write is None else include_write
         functions: list[Any] = [
             self.list_skills,
             self.read_skill,
             self.read_skill_reference,
+            self.list_reference_files,
+            self.search_skill_cases,
             self.list_candidate_files,
             self.read_candidate_file,
         ]
         if writable:
             functions.append(self.write_candidate_file)
-        functions.append(self.compile_candidate)
         return functions
 
 

@@ -159,6 +159,8 @@ class CheckRepairRunner:
         native_evaluator: NativeEvaluator,
         generator: Generator | None = None,
         parent_commit: str = "unknown",
+        parent_repo: str | Path | None = None,
+        osis_agents_file: str | Path | None = None,
         framework_pythons: Mapping[str, str | Path] | None = None,
         base_url: str = "",
     ) -> None:
@@ -167,22 +169,40 @@ class CheckRepairRunner:
         self.native_evaluator = native_evaluator
         self.generator = generator or dispatch_generation
         self.parent_commit = parent_commit
+        self.parent_repo = Path(parent_repo).resolve() if parent_repo is not None else None
+        self.osis_agents_file = (
+            Path(osis_agents_file).resolve() if osis_agents_file is not None else None
+        )
         self.framework_pythons = {
             key.upper(): str(Path(value).resolve()) for key, value in (framework_pythons or {}).items()
         }
         self.base_url = base_url
 
-    def _run_dir(self, label: str, architecture: str, task_id: str, seed: int) -> Path:
+    def _run_dir(
+        self,
+        label: str,
+        architecture: str,
+        task_id: str,
+        seed: int,
+        bridge_type: str,
+    ) -> Path:
         return (
             self.runs_root
             / _segment(label)
             / _segment(architecture.upper())
-            / _segment(task_id)
-            / f"seed-{int(seed)}"
+            / _segment(bridge_type)
+            / "check_repair"
+            / f"{_segment(task_id)}__seed{int(seed)}"
         )
 
     def _skill_hash(self) -> str:
         return SkillAdapter(self.skills_dir).skill_bundle_hash() if self.skills_dir.is_dir() else "unavailable"
+
+    @staticmethod
+    def _parent_native_eval(architecture_id: str) -> bool:
+        """T6 follows parent ``--via agent --osis --rebuild``: no syntax compile hard gate."""
+
+        return architecture_id == "T6"
 
     def run(
         self,
@@ -201,7 +221,13 @@ class CheckRepairRunner:
         spec = get_adapter(architecture)
         public_task = sample.to_public_task()
         private = sample.private_reference()
-        run_dir = self._run_dir(label, architecture, public_task.task_id, seed)
+        run_dir = self._run_dir(
+            label,
+            architecture,
+            public_task.task_id,
+            seed,
+            public_task.bridge_type,
+        )
         result_path = run_dir / "run_result.json"
         if resume and result_path.is_file():
             prior = json.loads(result_path.read_text(encoding="utf-8"))
@@ -268,6 +294,10 @@ class CheckRepairRunner:
                 "max_output_tokens": int(max_output_tokens),
                 "framework_pythons": self.framework_pythons,
             }
+            if self.parent_repo is not None:
+                request["parent_repo"] = str(self.parent_repo)
+            if self.osis_agents_file is not None:
+                request["osis_agents_file"] = str(self.osis_agents_file)
             generation = self.generator(request)
             _write_json(run_dir / "generation.json", generation)
             if generation.get("status") != "completed":
@@ -276,9 +306,10 @@ class CheckRepairRunner:
             workspace = CandidateWorkspace(candidate)
             if not any(path.endswith(".py") for path in workspace.list_files()):
                 raise RunFailure("CANDIDATE_EMPTY", "candidate contains no Python files")
-            syntax_failures = workspace.compile_python()
-            if syntax_failures:
-                raise RunFailure("CANDIDATE_SYNTAX_ERROR", json.dumps(syntax_failures, ensure_ascii=False))
+            if not self._parent_native_eval(architecture):
+                syntax_failures = workspace.compile_python()
+                if syntax_failures:
+                    raise RunFailure("CANDIDATE_SYNTAX_ERROR", json.dumps(syntax_failures, ensure_ascii=False))
 
             repaired_check = self.native_evaluator.evaluate(candidate, private.osis_post)
             localization = score_localization(

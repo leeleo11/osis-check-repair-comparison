@@ -1,8 +1,9 @@
-"""T5: sequential diagnoser, repairer, and read-only verifier roles."""
+"""T5: CrewAI native skills, delegation, and file tools. Same policy as the modeling line."""
 
 from __future__ import annotations
 
 import os
+import re
 import time
 from pathlib import Path
 from typing import Any, Callable
@@ -12,43 +13,75 @@ os.environ.setdefault("CREWAI_DISABLE_TELEMETRY", "true")
 os.environ.setdefault("CREWAI_DISABLE_TRACKING", "true")
 
 from baselines._framework_common import (
-    BoundedTools,
     build_prompt,
     finish,
     model_api_settings,
     package_version,
-    resolve_max_steps,
+    LIBRARY_LOOP_BOUND,
 )
 
 
 ROLE_ORDER = ("diagnoser", "repairer", "verifier")
-Runtime = Callable[[dict[str, Any], str, dict[str, BoundedTools]], dict[str, Any]]
+ROLE_CAN_WRITE = {"diagnoser": False, "repairer": True, "verifier": False}
+# CrewAI's code interpreter is deprecated and no longer registers a tool.
+AGENT_POLICY = {"allow_code_execution": False, "allow_delegation": True}
+_RESOURCE_ROOTS = ("references", "scripts", "assets")
+_SKILL_NAME = re.compile(r"(?m)^name:\s*(?P<name>\S+)\s*$")
+Runtime = Callable[[dict[str, Any], str], dict[str, Any]]
 
 
-def build_role_tools(request: dict[str, Any]) -> dict[str, BoundedTools]:
-    return {
-        "diagnoser": BoundedTools(request, allow_write=False),
-        "repairer": BoundedTools(request, allow_write=True),
-        "verifier": BoundedTools(request, allow_write=False),
-    }
+def _find_skill_dir(skills_dir: Path, skill_name: str) -> Path | None:
+    for child in Path(skills_dir).iterdir():
+        skill_md = child / "SKILL.md"
+        if not child.is_dir() or not skill_md.is_file():
+            continue
+        if child.name == skill_name:
+            return child
+        match = _SKILL_NAME.search(skill_md.read_text(encoding="utf-8", errors="replace"))
+        if match and match.group("name") == skill_name:
+            return child
+    return None
 
 
-def _role_budgets(max_steps: int) -> dict[str, int]:
-    total = max(3, max_steps)
-    diagnosis = max(1, total // 4)
-    verification = max(1, total // 4)
-    return {
-        "diagnoser": diagnosis,
-        "repairer": total - diagnosis - verification,
-        "verifier": verification,
-    }
+def read_skill_resource(skills_dir: Path, skill_name: str, relative_path: str = "") -> str:
+    """CrewAI load_skill returns only SKILL.md. This reads one resource file."""
+
+    skill_dir = _find_skill_dir(skills_dir, skill_name)
+    if skill_dir is None:
+        return f"Skill {skill_name!r} is not available."
+    relative = relative_path.strip().replace("\\", "/")
+    if not relative:
+        lines: list[str] = []
+        for folder in _RESOURCE_ROOTS:
+            base = skill_dir / folder
+            if not base.is_dir():
+                continue
+            files = sorted(path.relative_to(base).as_posix() for path in base.rglob("*") if path.is_file())
+            if files:
+                lines.append(f"{folder}/: " + ", ".join(files))
+        return "\n".join(lines) or "No resource files."
+    path = Path(relative)
+    if path.is_absolute() or ".." in path.parts or not path.parts or path.parts[0] not in _RESOURCE_ROOTS:
+        return "Path must be one file inside references/, scripts/, or assets/."
+    target = (skill_dir / path).resolve()
+    if not target.is_file() or not target.is_relative_to((skill_dir / path.parts[0]).resolve()):
+        return f"File not found: {path.as_posix()}"
+    return target.read_text(encoding="utf-8", errors="replace")
 
 
-def _crewai_runtime(
-    request: dict[str, Any],
-    prompt: str,
-    role_tools: dict[str, BoundedTools],
-) -> dict[str, Any]:
+def _file_tools(root: Path, *, write: bool) -> list[Any]:
+    from crewai_tools import DirectoryReadTool, FileReadTool, FileWriterTool
+
+    tools: list[Any] = [
+        DirectoryReadTool(directory=str(root)),
+        FileReadTool(base_dir=str(root)),
+    ]
+    if write:
+        tools.append(FileWriterTool(base_dir=str(root)))
+    return tools
+
+
+def _crewai_runtime(request: dict[str, Any], prompt: str) -> dict[str, Any]:
     from crewai import Agent, Crew, Process, Task
     from crewai.llm import LLM
     from crewai.tools import tool
@@ -65,52 +98,63 @@ def _crewai_runtime(
     if settings["max_tokens"] is not None:
         llm_kwargs["max_tokens"] = settings["max_tokens"]
     llm = LLM(**llm_kwargs)
-    budgets = _role_budgets(resolve_max_steps(request.get("max_steps")))
+    skills_dir = Path(request["skills_dir"])
+    candidate = Path(request["workspace"]) / "candidate_project"
+    candidate.mkdir(parents=True, exist_ok=True)
 
-    def wrapped(role: str) -> list[Any]:
-        return [tool(function) for function in role_tools[role].functions()]
+    @tool("read_skill_resource")
+    def read_skill_resource_tool(skill_name: str, relative_path: str = "") -> str:
+        """List resource file names, or read one file under references, scripts, or assets."""
 
-    policy = {"allow_delegation": False, "allow_code_execution": False, "verbose": False}
+        return read_skill_resource(skills_dir, skill_name, relative_path)
+
+    resource = [read_skill_resource_tool]
     diagnoser = Agent(
         role="Check failure diagnoser",
-        goal="Use public skills and candidate files to identify the smallest plausible root cause.",
-        backstory="OSIS diagnosis specialist who never edits files.",
+        goal="Load the mounted skills and identify the smallest plausible root cause.",
+        backstory="OSIS diagnosis specialist. Uses the crew load_skill tool and does not write files.",
         llm=llm,
-        tools=wrapped("diagnoser"),
-        max_iter=budgets["diagnoser"],
-        **policy,
+        tools=[*resource, *_file_tools(candidate, write=False)],
+        max_iter=LIBRARY_LOOP_BOUND,
+        verbose=False,
+        **AGENT_POLICY,
     )
     repairer = Agent(
         role="Candidate repair engineer",
-        goal="Apply the diagnosis as a minimal bounded candidate edit and compile it.",
-        backstory="OSIS engineer authorized to edit only the staged candidate.",
+        goal="Apply the diagnosis with CrewAI file tools inside the candidate directory.",
+        backstory="OSIS engineer. Writes only through the File Writer Tool.",
         llm=llm,
-        tools=wrapped("repairer"),
-        max_iter=budgets["repairer"],
-        **policy,
+        tools=[*resource, *_file_tools(candidate, write=True)],
+        max_iter=LIBRARY_LOOP_BOUND,
+        verbose=False,
+        **AGENT_POLICY,
     )
     verifier = Agent(
         role="Read-only repair reviewer",
-        goal="Inspect and compile the candidate, then report risks and final localization JSON.",
-        backstory="Independent reviewer with no write capability and no access to the official scorer.",
+        goal="Read the candidate and report the final localization JSON.",
+        backstory="Independent reviewer. Reads files and does not write them.",
         llm=llm,
-        tools=wrapped("verifier"),
-        max_iter=budgets["verifier"],
-        **policy,
+        tools=[*resource, *_file_tools(candidate, write=False)],
+        max_iter=LIBRARY_LOOP_BOUND,
+        verbose=False,
+        **AGENT_POLICY,
     )
     diagnose_task = Task(
-        description="Diagnose this public task without editing.\n\n" + prompt,
+        description=(
+            "Use load_skill and read_skill_resource. You may delegate or ask a coworker. "
+            "Do not write files.\n\n" + prompt
+        ),
         expected_output="A concise diagnosis with evidence and a proposed edit.",
         agent=diagnoser,
     )
     repair_task = Task(
-        description="Apply the prior diagnosis to the candidate, then compile all Python files.",
+        description="Apply the diagnosis by editing candidate files with the file writer.",
         expected_output="Edited file list and repair rationale.",
         agent=repairer,
         context=[diagnose_task],
     )
     verify_task = Task(
-        description="Review the candidate read-only. Report compile status and final localizations JSON.",
+        description="Read the candidate. Do not write. Report the localization JSON.",
         expected_output="Read-only verification verdict and localization JSON.",
         agent=verifier,
         context=[diagnose_task, repair_task],
@@ -120,17 +164,17 @@ def _crewai_runtime(
         tasks=[diagnose_task, repair_task, verify_task],
         process=Process.sequential,
         verbose=False,
+        skills=[skills_dir],
     ).kickoff()
     outputs = getattr(result, "tasks_output", None) or []
     return {
         "final_answer": str(getattr(result, "raw", result))[-4000:],
         "role_outputs": {
-            role: str(output)[-2000:]
-            for role, output in zip(ROLE_ORDER, outputs, strict=False)
+            role: str(output)[-2000:] for role, output in zip(ROLE_ORDER, outputs, strict=False)
         },
+        "delegation": True,
         "model_calls": len(outputs),
         "tool_calls": 0,
-        "role_budgets": budgets,
     }
 
 
@@ -143,13 +187,14 @@ def run_generation(request: dict[str, Any], *, runtime: Runtime | None = None) -
         "interaction_mode": "sequential_roles",
         "roles": list(ROLE_ORDER),
         "verifier_write_access": False,
+        "allow_delegation": True,
         "model": request.get("model"),
         "model_calls": 0,
         "tool_calls": 0,
         "status": "failed",
     }
     try:
-        output = (runtime or _crewai_runtime)(request, build_prompt(request), build_role_tools(request))
+        output = (runtime or _crewai_runtime)(request, build_prompt(request))
         metadata.update(output)
         metadata.update(status="completed", stop_reason="completed")
     except Exception as exc:  # noqa: BLE001

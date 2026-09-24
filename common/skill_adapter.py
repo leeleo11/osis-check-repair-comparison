@@ -58,8 +58,6 @@ class SkillAdapter:
     def _read(self, path: Path) -> str:
         if not path.is_file():
             raise FileNotFoundError(path)
-        if path.stat().st_size > self.max_read_bytes:
-            raise SkillPathError(f"skill file exceeds {self.max_read_bytes} bytes")
         return path.read_text(encoding="utf-8", errors="replace")
 
     def list_skills(self) -> list[SkillMeta]:
@@ -108,8 +106,13 @@ class SkillAdapter:
         return digest.hexdigest()
 
     def fixed_bundle_text(self) -> str:
-        """Return every SKILL.md body in deterministic order for T1."""
+        """Every file in the snapshot. T1 has no tools, so the bundle is the whole tree T6 can open."""
         sections = [f"# Skill snapshot sha256={self.skill_bundle_hash()}"]
-        for skill in self.list_skills():
-            sections.extend((f"\n## {skill.skill_id}", self.read_skill(skill.skill_id)))
+        files = sorted(
+            (path for path in self.root.rglob("*") if path.is_file()),
+            key=lambda path: path.relative_to(self.root).as_posix(),
+        )
+        for path in files:
+            relative = path.relative_to(self.root).as_posix()
+            sections.extend((f"\n## {relative}", self._read(path)))
         return "\n".join(sections)

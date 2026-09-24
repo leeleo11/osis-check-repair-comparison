@@ -8,13 +8,13 @@
 | ID | 架构 | 框架特征 |
 | --- | --- | --- |
 | T1 | Direct | 单次模型请求，无交互工具 |
-| T2 | LangGraph | create_agent 流式 ReAct 与受限工具 |
-| T3 | smolagents | CodeAgent / CodeAct |
-| T4 | OpenHands | AgentSkills 原生渐进加载、Agent、Conversation |
-| T5 | CrewAI | 诊断、修复、只读复核三角色顺序编排 |
-| T6 | OSIS-AI | 隔离 OpenCode 工程中的原生工作流，独占串行运行 |
+| T2 | LangGraph | `create_agent` 流式 ReAct；调用方传入与建模线相同的技能读取和候选读写工具 |
+| T3 | smolagents | `CodeAgent`，`tools=[]`；解释器放行 `json`、`pathlib`，自己读写文件 |
+| T4 | OpenHands | 原生 `invoke_skill`；官方终端、文件编辑器和任务跟踪；浏览器关闭 |
+| T5 | CrewAI | `Crew(skills=...)`，允许委派；官方文件工具；诊断与复核只读，修复者可写 |
+| T6 | OSIS-AI | 不另起服务；调用父仓库 `chat_via_agent`，串行 |
 
-六个架构接收同一个公开任务、技能快照、模型、variant、预算和候选写入合同。正式 OSIS 验算与评分只由统一 runner 执行。
+T6 复用父仓库验算修复代理，读的是父仓库 OpenCode 里的技能和工程。T1–T5 拿到这棵技能树的完整副本和同一份候选工程，框架各自不同。正式 OSIS 验算与评分只由统一 runner 执行。
 
 ## 快速检查
 
@@ -28,7 +28,7 @@
 
     uv run python scripts/run_dataset.py --architecture T2 --skills-dir tmp/check-repair-skill-snapshot --dry-run
 
-创建不含模板答案的本地技能快照：
+创建与父仓库 T6 相同的技能树副本。`.agents/skills` 里的文件全部保留，题目金标准不在这棵树里：
 
     uv run python scripts/create_skill_snapshot.py --parent-repo PATH_TO_PARENT
 

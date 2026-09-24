@@ -76,6 +76,7 @@ def test_runner_stages_privately_verifies_scores_and_writes_manifest(tmp_path: P
     result = runner.run(sample, "T2", seed=7, model="test-model", label="unit")
 
     run_dir = Path(result["run_dir"])
+    assert run_dir.parts[-4:] == ("T2", "synthetic", "check_repair", "cr-test__seed7")
     assert result["status"] == "completed"
     assert result["evaluation"]["localization_score"] == 1.0
     assert result["evaluation"]["repair_pass"] is True
@@ -112,6 +113,80 @@ def test_seeded_ng_mismatch_fails_before_model_call(tmp_path: Path) -> None:
     assert result["status"] == "failed"
     assert result["failure_code"] == "SEEDED_NG_MISMATCH"
     assert called is False
+
+
+def test_runner_passes_parent_repo_to_generation_request(tmp_path: Path) -> None:
+    sample = _sample(tmp_path)
+    evaluator = FakeNativeEvaluator()
+    seen: dict[str, object] = {}
+    parent = tmp_path / "parent-repo"
+
+    def generator(request: dict[str, object]) -> dict[str, object]:
+        seen.update(request)
+        Path(str(request["workspace"])).joinpath("candidate_project", "py", "main.py").write_text(
+            "VALUE = 2\n", encoding="utf-8"
+        )
+        return {
+            "status": "completed",
+            "final_answer": '{"localizations":[{"check_item":"x","reason_code":"material_grade"}]}',
+        }
+
+    runner = CheckRepairRunner(
+        runs_root=tmp_path / "runs",
+        skills_dir=tmp_path / "skills",
+        native_evaluator=evaluator,
+        generator=generator,
+        parent_repo=parent,
+    )
+    runner.run(sample, "T6", seed=0, model="test", label="parent")
+    assert seen["parent_repo"] == str(parent.resolve())
+
+
+def test_t6_still_evaluates_when_candidate_python_does_not_compile(tmp_path: Path) -> None:
+    sample = _sample(tmp_path)
+    evaluator = FakeNativeEvaluator()
+
+    def generator(request: dict[str, object]) -> dict[str, object]:
+        Path(str(request["workspace"])).joinpath("candidate_project", "py", "main.py").write_text(
+            "def broken(\n", encoding="utf-8"
+        )
+        return {
+            "status": "completed",
+            "final_answer": '{"localizations":[{"check_item":"x","reason_code":"material_grade"}]}',
+        }
+
+    runner = CheckRepairRunner(
+        runs_root=tmp_path / "runs",
+        skills_dir=tmp_path / "skills",
+        native_evaluator=evaluator,
+        generator=generator,
+    )
+    result = runner.run(sample, "T6", seed=0, model="test", label="t6-syntax")
+    assert result["status"] == "completed"
+    assert result["evaluation"]["repair_pass"] is True
+    assert len(evaluator.calls) == 2
+
+
+def test_non_t6_still_fails_on_candidate_syntax_error(tmp_path: Path) -> None:
+    sample = _sample(tmp_path)
+    evaluator = FakeNativeEvaluator()
+
+    def generator(request: dict[str, object]) -> dict[str, object]:
+        Path(str(request["workspace"])).joinpath("candidate_project", "py", "main.py").write_text(
+            "def broken(\n", encoding="utf-8"
+        )
+        return {"status": "completed", "final_answer": "{}"}
+
+    runner = CheckRepairRunner(
+        runs_root=tmp_path / "runs",
+        skills_dir=tmp_path / "skills",
+        native_evaluator=evaluator,
+        generator=generator,
+    )
+    result = runner.run(sample, "T2", seed=0, model="test", label="t2-syntax")
+    assert result["status"] == "failed"
+    assert result["failure_code"] == "CANDIDATE_SYNTAX_ERROR"
+    assert len(evaluator.calls) == 1
 
 
 def test_resume_returns_existing_completed_run_without_reexecution(tmp_path: Path) -> None:

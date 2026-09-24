@@ -1,5 +1,7 @@
 # Check-repair Comparison Implementation Plan
 
+当前实现以 [框架使用说明.md](../../框架使用说明.md) 为准。本文是建仓计划，其中 T6 隔离交接的步骤已经过时。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: use superpowers:executing-plans task by task.
 
 **Goal:** Build a reproducible T1–T6 check-repair comparison repository whose real tasks, hidden seed data, native OSIS files, and experiment results remain external to Git.
