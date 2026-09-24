@@ -12,7 +12,7 @@
 | T3 | smolagents | `CodeAgent`，`tools=[]`；解释器放行 `json`、`pathlib`，自己读写文件 |
 | T4 | OpenHands | 原生 `invoke_skill`；官方终端、文件编辑器和任务跟踪；浏览器关闭 |
 | T5 | CrewAI | `Crew(skills=...)`，允许委派；官方文件工具；诊断与复核只读，修复者可写 |
-| T6 | OSIS-AI | 不另起服务；调用父仓库 `chat_via_agent`，串行 |
+| T6 | OSIS-AI | 父仓库指令；只挂无模板快照；串行 |
 
 T1–T6 使用同一份去掉 `templates/` 的技能快照和同一份候选工程。模板是种错前的正确工程，留在技能里等于把答案交给模型。正式 OSIS 验算与评分只由统一 runner 执行。
 
