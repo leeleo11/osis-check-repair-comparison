@@ -9,6 +9,6 @@
 | T3 | smolagents CodeAgent | `tools=[]`；`json` 与 `pathlib` 放行，模型自己读写 |
 | T4 | OpenHands AgentContext / Conversation | 原生 AgentSkills；官方终端与文件编辑器；浏览器关闭 |
 | T5 | CrewAI sequential Crew | 原生技能挂载与委派；官方文件工具；diagnoser、verifier 只读，repairer 可写 |
-| T6 | 父仓库 check-repair agent | 调用 `chat_via_agent`；技能与工程都在父仓库 OpenCode 上；串行；评测无语法硬门禁 |
+| T6 | OSIS-AI | 父仓库指令；只挂无模板技能快照和当前候选；串行；评测无语法硬门禁 |
 
 Adapter 不能读取 private staging、父仓库数据集、正式评分器或其他 run。它们可以读取统一技能快照和当前 candidate_project，并在允许的文本类型内写候选。官方 OSIS 验算只发生在 adapter 返回之后。

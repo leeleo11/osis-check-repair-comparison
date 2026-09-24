@@ -20,11 +20,11 @@
 
     uv run python scripts/setup_framework_envs.py
 
-T1–T5 的框架能力与建模线对齐。T6 不在本仓库启动 OpenCode：先按父仓库方式启动其 OpenCode，再由本仓库调用 `datasets/check_repair/run_eval.py` 的 `chat_via_agent`。各框架版本由 pyproject.toml 与 uv.lock 固定。
+T1–T5 的框架能力与建模线对齐。T6 仍用父仓库的 OSIS-AI 指令，但技能只挂这份去掉模板的快照，不使用父仓库 OpenCode 里的原始技能树。各框架版本由 pyproject.toml 与 uv.lock 固定。
 
 ## 3. 创建统一技能快照
 
-T6 使用父仓库 OpenCode 里已经挂着的 `.agents/skills`。T1–T5 使用这份树的完整副本，不删模板或参考文件。题目金标准不在技能树里：
+六个架构共用这一份快照。任何名为 `templates` 的目录都不会复制，避免用原模板对照种错工程。其余参考文件保留：
 
     uv run python scripts/create_skill_snapshot.py --parent-repo PATH_TO_PARENT
 

@@ -279,11 +279,16 @@ class CheckRepairRunner:
                     f"seeded NG mismatch: missing={sorted(expected_ng-actual_ng)}, unexpected={sorted(actual_ng-expected_ng)}",
                 )
 
+            public_skills = run_dir / "public_skills"
+            from scripts.create_skill_snapshot import create_snapshot
+
+            create_snapshot(self.skills_dir, public_skills)
+            manifest["skill_bundle_sha256"] = SkillAdapter(public_skills).skill_bundle_hash()
             request = {
                 "architecture_id": architecture,
                 "task": sanitize_for_model(public_task),
                 "workspace": str(run_dir),
-                "skills_dir": str(self.skills_dir),
+                "skills_dir": str(public_skills),
                 "model": model,
                 "variant": variant,
                 "base_url": self.base_url,
