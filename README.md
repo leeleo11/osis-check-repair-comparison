@@ -8,8 +8,8 @@
 | ID | 架构 | 框架特征 |
 | --- | --- | --- |
 | T1 | Direct | 单次模型请求，无交互工具 |
-| T2 | LangGraph | `create_agent` 流式 ReAct；调用方传入与建模线相同的技能读取和候选读写工具 |
-| T3 | smolagents | `CodeAgent`，`tools=[]`；解释器放行 `json`、`pathlib`，自己读写文件 |
+| T2 | LangGraph | `create_agent` 不自带工具；调用方传入读技能和读写候选文件，不含验算 |
+| T3 | smolagents | `CodeAgent`，`tools=[]`；只放行 `json`、`pathlib`。正式验算不放进解释器 |
 | T4 | OpenHands | 原生 `invoke_skill`；官方终端、文件编辑器和任务跟踪；浏览器关闭 |
 | T5 | CrewAI | `Crew(skills=...)`，允许委派；官方文件工具；诊断与复核只读，修复者可写 |
 | T6 | OSIS-AI | 父仓库指令；只挂无模板快照；串行 |
@@ -44,5 +44,5 @@ T1–T6 使用同一份去掉 `templates/` 的技能快照和同一份候选工�
 
 - REPRODUCIBILITY.md：从零复现实验
 - ENVIRONMENT.md：Python、OSIS 与 OpenCode 环境
-- docs/框架使用说明.md：怎么开跑、并行或串行、T1–T5 各自怎么读技能和写候选
+- docs/框架使用说明.md：怎么开跑、各框架的工具、为什么正式验算只在交卷后做
 - docs/数据边界与发布审计.md：隐私边界和发布门禁
